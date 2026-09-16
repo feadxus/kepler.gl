@@ -126,18 +126,18 @@ jobs:
       # 1️⃣7️⃣ 在 Google Drive 中创建备份存放目录
       - name: 📁 Create Google Drive Directory
         run: |
-          rclone mkdir feadxus-Google-Drive:/backup || true
+          rclone mkdir FEADXUS-Google-Drive:/backup || true
 
       # 1️⃣8️⃣ 上传压缩镜像文件至 Google Drive
       - name: ☁️ Upload Archive to Google Drive
         run: |
           rclone copy \
             kepler_images.tar.xz \
-            feadxus-Google-Drive:/backup/ \
+            FEADXUS-Google-Drive:/backup/ \
             --progress
 
       # 1️⃣9️⃣ 校验网盘文件, 确认安全送达
       - name: ✅ Verify Google Drive Upload
         run: |
           echo "🎉 搬运成功! 网盘文件清单如下:"
-          rclone lsf feadxus-Google-Drive:/backup/
+          rclone lsf FEADXUS-Google-Drive:/backup/
