@@ -1,0 +1,167 @@
+name: Build, Push to Docker Hub & Upload to Google Drive
+
+on:
+  workflow_dispatch: # 🎯 允许在 GitHub Actions 页面手动点击按钮触发运行
+
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
+
+jobs:
+  build-push-and-upload:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1️⃣ 检出项目源代码（开启 fetch-depth 和 submodules，确保全量代码被下载）
+      - name: 🐙 Checkout Repository
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+          submodules: 'recursive'
+
+      # 🔍 自动纠正路径：如果发现 docker 目录里没文件，就把官方的 Dockerfile 强行从子目录复制出来，或者做软链接
+      - name: 🛠️ Ensure Dockerfile Path Exists
+        run: |
+          if [ ! -f "docker/Dockerfile" ]; then
+            echo "⚠️ 警告：检测到 Git 未能正确同步 docker/Dockerfile，正在尝试全盘检索..."
+            # 在全盘寻找 Dockerfile 并复制到根目录作为兜底
+            FOUND_FILE=$(find . -name "Dockerfile" | head -n 1)
+            if [ -n "$FOUND_FILE" ]; then
+              echo "🎯 找到了备份 Dockerfile 位于: $FOUND_FILE，已自动映射到根目录"
+              cp "$FOUND_FILE" ./Dockerfile.bak
+              echo "DOCKERFILE_PATH=./Dockerfile.bak" >> $GITHUB_ENV
+            else
+              echo "❌ 严重错误：整个仓库都搜不到任何名为 Dockerfile 的文件！"
+              exit 1
+            fi
+          else
+            echo "✅ 完美：docker/Dockerfile 路径正常存在！"
+            echo "DOCKERFILE_PATH=docker/Dockerfile" >> $GITHUB_ENV
+          fi
+
+      # 2️⃣ 清理 Runner 磁盘空间
+      - name: 🧹 Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false
+          swap-storage: true
+
+      # 3️⃣ 配置 QEMU
+      - name: 🐢 Setup QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # 4️⃣ 初始化 Docker Buildx 构建器
+      - name: 🛠️ Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3.10.0
+
+      # 5️⃣ 登录到 Docker Hub
+      - name: 🔑 Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 6️⃣ 提取并自动生成 Docker 标签
+      - name: 🏷️ Extract Metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/kepler-gl
+          tags: |
+            type=raw,value=latest
+          flavor: |
+            latest=auto
+            prefix=
+
+      # 7️⃣ 编译并推送到 Docker Hub (动态引用上一步探测出的安全路径)
+      - name: 🚀 Build and Push to Docker Hub
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ env.DOCKERFILE_PATH }} 
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 8️⃣ 安装本地压缩与传输依赖工具
+      - name: 📦 Install Packaging Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y gzip xz-utils curl
+
+      # 9️⃣ 安装 rclone
+      - name: ⚡ Install rclone
+        run: |
+          curl https://rclone.org | sudo bash
+
+      # 🔟 部署 rclone 配置文件
+      - name: ⚙️ Setup rclone Config
+        env:
+          RCLONE_SECRET_DATA: ${{ secrets.GOOGLE_FEADXUS_DRIVE }}
+        run: |
+          mkdir -p ~/.config/rclone
+          echo "$RCLONE_SECRET_DATA" > ~/.config/rclone/rclone.conf
+
+      # 1️⃣1️⃣ 验证 rclone 连通性
+      - name: 🔍 Verify rclone Status
+        run: |
+          rclone version
+          rclone listremotes
+
+      # 1️⃣2️⃣ 本地单架构编译副本
+      - name: 🏗️ Build Local Copy for Backup
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            -f ${{ env.DOCKERFILE_PATH }} \
+            -t kepler-gl:latest \
+            .
+
+      # 1️⃣3️⃣ 确认生成
+      - name: 🖼️ Show Local Docker Images
+        run: |
+          docker images
+
+      # 1️⃣4️⃣ 导出为 tar
+      - name: 💾 Save Docker Image to Archive
+        run: |
+          docker save \
+            kepler-gl:latest \
+            -o kepler_images.tar
+
+      # 1️⃣5️⃣ xz 极限压缩
+      - name: 🗜️ Compress Archive with xz
+        run: |
+          xz -T0 -6 kepler_images.tar
+
+      # 1️⃣6️⃣ 显示大小
+      - name: 📏 Show Archive Size
+        run: |
+          ls -lh kepler_images.tar.xz
+
+      # 1️⃣7️⃣ 创建网盘目录
+      - name: 📁 Create Google Drive Directory
+        run: |
+          rclone mkdir FEADXUS-Google-Drive:/backup || true
+
+      # 1️⃣8️⃣ 上传至 Google Drive
+      - name: ☁️ Upload Archive to Google Drive
+        run: |
+          rclone copy \
+            kepler_images.tar.xz \
+            FEADXUS-Google-Drive:/backup/ \
+            --progress
+
+      # 1️⃣9️⃣ 校验网盘文件
+      - name: ✅ Verify Google Drive Upload
+        run: |
+          echo "🎉 搬运成功! 网盘文件清单如下:"
+          rclone lsf FEADXUS-Google-Drive:/backup/
