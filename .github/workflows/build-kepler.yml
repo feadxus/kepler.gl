@@ -1,35 +1,34 @@
 name: Build, Push to Docker Hub & Upload to Google Drive
 
 on:
-  workflow_dispatch: # 🎯 允许在 GitHub Actions 页面手动点击按钮触发运行
+  workflow_dispatch: # 🎯 允许手动点击运行
 
 env:
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
+  # 💡 直接在此处定义你的镜像完整名称
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/geolibre:latest
 
 jobs:
   build-push-and-upload:
     runs-on: ubuntu-latest
     steps:
-      # 1️⃣ 检出项目源代码(开启 fetch-depth 和 submodules, 确保全量代码被下载)
+      # 1️⃣ 检出项目源代码 (完整深度)
       - name: 🐙 Checkout Repository
         uses: actions/checkout@v4.2.2
         with:
           fetch-depth: 0
           submodules: 'recursive'
 
-      # 2️⃣ 校验并指定 Dockerfile 路径
-      - name: 🛠️ Ensure Dockerfile Path Exists
+      # 2️⃣ 探测并记录项目原生的 Dockerfile 真实路径 (绝不移动文件)
+      - name: 🛠️ Find Original Dockerfile
         run: |
-          if [ -f "docker/Dockerfile" ]; then
-            echo "✅ 成功找到路径: docker/Dockerfile"
-            echo "DOCKERFILE_PATH=docker/Dockerfile" >> $GITHUB_ENV
-          elif [ -f "Dockerfile" ]; then
-            echo "⚠️ 在根目录找到 Dockerfile"
-            echo "DOCKERFILE_PATH=Dockerfile" >> $GITHUB_ENV
-          else
-            echo "❌ 严重错误: 无法找到 Dockerfile 文件，请检查代码仓库结构！"
+          TARGET_DOCKERFILE=$(find . -maxdepth 3 -name "Dockerfile" | head -n 1)
+          if [ -z "$TARGET_DOCKERFILE" ]; then
+            echo "❌ 严重错误: 仓库中未找到任何 Dockerfile！"
             exit 1
           fi
+          echo "✅ 找到项目原生 Dockerfile 路径: $TARGET_DOCKERFILE"
+          echo "DOCKERFILE_PATH=$TARGET_DOCKERFILE" >> $GITHUB_ENV
 
       # 3️⃣ 清理 Runner 磁盘空间
       - name: 🧹 Free Disk Space (Ubuntu)
@@ -43,7 +42,7 @@ jobs:
           docker-images: false
           swap-storage: true
 
-      # 4️⃣ 配置 QEMU (跨平台支持)
+      # 4️⃣ 配置 QEMU
       - name: 🐢 Setup QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -58,7 +57,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 7️⃣ 编译并推送到 Docker Hub (显式直接指定 Tag，规避 metadata 冲突)
+      # 7️⃣ 编译并强行推送到 Docker Hub (显式传递 IMAGE_NAME，防止空 Tag 导致跳过推送)
       - name: 🚀 Build and Push to Docker Hub
         uses: docker/build-push-action@v6
         with:
@@ -67,7 +66,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           provenance: false
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/kepler-gl:latest
+          tags: ${{ env.IMAGE_NAME }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -96,13 +95,13 @@ jobs:
           rclone version
           rclone listremotes
 
-      # 1️⃣2️⃣ 本地单架构编译副本 (用于导出打包到 Google Drive)
+      # 1️⃣2️⃣ 本地单架构编译副本 (用于备份上传)
       - name: 🏗️ Build Local Copy for Backup
         run: |
           docker build \
             --platform linux/amd64 \
             -f ${{ env.DOCKERFILE_PATH }} \
-            -t ${{ secrets.DOCKERHUB_USERNAME }}/kepler-gl:latest \
+            -t ${{ env.IMAGE_NAME }} \
             .
 
       # 1️⃣3️⃣ 确认生成
@@ -114,18 +113,18 @@ jobs:
       - name: 💾 Save Docker Image to Archive
         run: |
           docker save \
-            ${{ secrets.DOCKERHUB_USERNAME }}/kepler-gl:latest \
-            -o kepler_images.tar
+            ${{ env.IMAGE_NAME }} \
+            -o geolibre_images.tar
 
       # 1️⃣5️⃣ xz 极限压缩
       - name: 🗜️ Compress Archive with xz
         run: |
-          xz -T0 -6 kepler_images.tar
+          xz -T0 -6 geolibre_images.tar
 
       # 1️⃣6️⃣ 显示大小
       - name: 📏 Show Archive Size
         run: |
-          ls -lh kepler_images.tar.xz
+          ls -lh geolibre_images.tar.xz
 
       # 1️⃣7️⃣ 创建网盘目录
       - name: 📁 Create Google Drive Directory
@@ -136,7 +135,7 @@ jobs:
       - name: ☁️ Upload Archive to Google Drive
         run: |
           rclone copy \
-            kepler_images.tar.xz \
+            geolibre_images.tar.xz \
             FEADXUS-Google-Drive:/backup/ \
             --progress
 
