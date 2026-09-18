@@ -82,12 +82,12 @@ jobs:
           outputs: type=oci,dest=./geolibre_multiarch.tar
           cache-from: type=gha
 
-      # 9️⃣ 安装 xz 与 rclone 工具
+      # 9️⃣ 安装 xz 与 rclone 工具（已修正 rclone 安装链接）
       - name: 📦 Install Packaging Dependencies & rclone
         run: |
           sudo apt update
           sudo apt install -y xz-utils curl
-          curl https://rclone.org | sudo bash
+          curl https://rclone.org/install.sh | sudo bash
 
       # 🔟 部署 rclone 配置文件
       - name: ⚙️ Setup rclone Config
