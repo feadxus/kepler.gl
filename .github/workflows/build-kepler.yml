@@ -7,7 +7,7 @@ on:
       - master
     tags:
       - 'v*'
-  workflow_dispatch: # 支持在 GitHub 页面手动触发执行
+  workflow_dispatch:
 
 env:
   IMAGE_NAME: geolibre
@@ -21,7 +21,7 @@ jobs:
       - name: 🐙 Checkout Repository
         uses: actions/checkout@v4
 
-      # 2️⃣ 清理 Runner 磁盘空间（避免多架构构建/解压镜像爆磁盘）
+      # 2️⃣ 清理 Runner 磁盘空间
       - name: 🧹 Free Disk Space (Ubuntu)
         uses: jlumbroso/free-disk-space@main
         with:
@@ -33,7 +33,7 @@ jobs:
           docker-images: false
           swap-storage: true
 
-      # 3️⃣ 配置 QEMU 模拟器（支持交叉编译 arm64）
+      # 3️⃣ 配置 QEMU 模拟器
       - name: 🐢 Setup QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -64,7 +64,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./Dockerfile
+          file: ./docker/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -77,7 +77,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./Dockerfile
+          file: ./docker/Dockerfile
           platforms: linux/amd64,linux/arm64
           outputs: type=oci,dest=./geolibre_multiarch.tar
           cache-from: type=gha
