@@ -59,7 +59,7 @@ jobs:
             type=semver,pattern={{version}}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
 
-      # 7️⃣ 构建多架构镜像 (amd64 + arm64) 并直接推送至 Docker Hub
+      # 7️⃣ 构建多架构镜像并直接推送至 Docker Hub
       - name: 🚀 Build and Push Multi-Arch Image to Docker Hub
         uses: docker/build-push-action@v5
         with:
@@ -72,24 +72,36 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # 8️⃣ 专门构建多架构本地 OCI 归档包 (用于备份到网盘)
-      - name: 📦 Export Multi-Arch OCI Archive for Backup
+      # 8️⃣ 导出标准 docker load 格式 - amd64 架构
+      - name: 📦 Build & Export Standard Docker Archive (amd64)
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./docker/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          outputs: type=oci,dest=./kepler.gl_multiarch.tar
+          platforms: linux/amd64
+          outputs: type=docker,dest=./${{ env.IMAGE_NAME }}-amd64.tar
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest-amd64
           cache-from: type=gha
 
-      # 9️⃣ 安装 xz 与 rclone 工具
+      # 9️⃣ 导出标准 docker load 格式 - arm64 架构
+      - name: 📦 Build & Export Standard Docker Archive (arm64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          platforms: linux/arm64
+          outputs: type=docker,dest=./${{ env.IMAGE_NAME }}-arm64.tar
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest-arm64
+          cache-from: type=gha
+
+      # 🔟 安装 xz 与 rclone 工具
       - name: 📦 Install Packaging Dependencies & rclone
         run: |
           sudo apt update
           sudo apt install -y xz-utils curl
           curl https://rclone.org/install.sh | sudo bash
 
-      # 🔟 部署 rclone 配置文件
+      # 1️⃣1️⃣ 部署 rclone 配置文件
       - name: ⚙️ Setup rclone Config
         env:
           RCLONE_SECRET_DATA: ${{ secrets.GOOGLE_FEADXUS_DRIVE }}
@@ -97,36 +109,35 @@ jobs:
           mkdir -p ~/.config/rclone
           echo "$RCLONE_SECRET_DATA" > ~/.config/rclone/rclone.conf
 
-      # 1️⃣1️⃣ 验证 rclone 连通性
+      # 1️⃣2️⃣ 验证 rclone 连通性
       - name: 🔍 Verify rclone Status
         run: |
           rclone version
           rclone listremotes
 
-      # 1️⃣2️⃣ xz 多核极限压缩多架构归档
-      - name: 🗜️ Compress Archive with xz
+      # 1️⃣3️⃣ xz 多核极限压缩两个架构的标准归档文件
+      - name: 🗜️ Compress Archives with xz
         run: |
-          xz -T0 -6 kepler.gl_multiarch.tar
+          xz -T0 -6 ${{ env.IMAGE_NAME }}-amd64.tar
+          xz -T0 -6 ${{ env.IMAGE_NAME }}-arm64.tar
 
-      # 1️⃣3️⃣ 显示压缩文件大小
+      # 1️⃣4️⃣ 显示压缩文件大小
       - name: 📏 Show Archive Size
         run: |
-          ls -lh kepler.gl_multiarch.tar.xz
+          ls -lh *.tar.xz
 
-      # 1️⃣4️⃣ 创建 Google Drive 文件夹
+      # 1️⃣5️⃣ 创建 Google Drive 文件夹
       - name: 📁 Create Google Drive Directory
         run: |
           rclone mkdir FEADXUS-Google-Drive:/backup || true
 
-      # 1️⃣5️⃣ 上传至 Google Drive
-      - name: ☁️ Upload Archive to Google Drive
+      # 1️⃣6️⃣ 上传两个架构压缩包至 Google Drive
+      - name: ☁️ Upload Archives to Google Drive
         run: |
-          rclone copy \
-            kepler.gl_multiarch.tar.xz \
-            FEADXUS-Google-Drive:/backup/ \
-            --progress
+          rclone copy ${{ env.IMAGE_NAME }}-amd64.tar.xz FEADXUS-Google-Drive:/backup/ --progress
+          rclone copy ${{ env.IMAGE_NAME }}-arm64.tar.xz FEADXUS-Google-Drive:/backup/ --progress
 
-      # 1️⃣6️⃣ 校验网盘文件
+      # 1️⃣7️⃣ 校验网盘文件
       - name: ✅ Verify Google Drive Upload
         run: |
           echo "🎉 搬运成功! 网盘文件清单如下:"
